@@ -1,0 +1,818 @@
+---
+title: "Validation_biomarkers"
+output: html_notebook
+---
+Run Calculating_BA.Rmd for to1po2
+```{r}
+biomarkers_NH =c("albumin","alp","lncrp","totchol","lncreat","hba1c","sbp","bun","uap","lymph","mcv","wbc")
+
+load("W:/C6_AmorisGuest/Sara Hagg/Karolina Gustavsson/BioAge-master/BioAge/data/NHANES3_HDTrain.rda")
+load("W:/C6_AmorisGuest/Sara Hagg/Karolina Gustavsson/BioAge-master/BioAge/data/NHANES4.rda")
+load("W:/C6_AmorisGuest/Sara Hagg/Karolina Gustavsson/BioAge-master/BioAge/data/NHANES3.rda")
+
+#HD using NHANES (separate training for men and women)
+hd = hd_nhanes(biomarkers=c("albumin","alp","lncrp","totchol","lncreat","hba1c","sbp","bun","uap","lymph","mcv","wbc"))
+#KDM bioage using NHANES (separate training for men and women)
+kdm = kdm_nhanes(biomarkers=c("albumin","alp","lncrp","totchol","lncreat","hba1c","sbp","bun","uap","lymph","mcv","wbc"))
+#phenoage using NHANES
+phenoage = phenoage_nhanes(biomarkers=c("albumin_gL","alp","lncrp","totchol","lncreat_umol","hba1c","sbp","bun","uap","lymph","mcv","wbc"))
+
+#assemble NHANES IV dataset with projected biological aging measures for analysis
+#data = merge(hd$data, kdm$data) %>% merge(., phenoage$data)
+```
+
+```{r}
+colnames(amoris)[colnames(amoris) == "Kon"] <- "gender"
+colnames(amoris)[colnames(amoris) == "Alder"] <- "age"
+colnames(amoris)[colnames(amoris) == "Id"] <- "sampleID"
+
+amoris <- amoris %>%
+  mutate(status = ifelse(is.na(DODSDATn), 0, 1)) %>%
+  mutate(time = as.numeric(difftime(lastDate, firstDate, units = "weeks")) / 4.33)
+
+negative_counts <- sum(amoris$time < 0)
+print(paste("Number of negative survival times:", negative_counts))
+
+# Filtering out negative times
+amoris <- amoris %>% filter(time >= 0)
+```
+
+#what should the timescale be here?
+
+Biomarkers
+```{r}
+# Biomarkers measures to be tested against mortality
+BM <- c("S_Alb", "S_Krea", "TC", "TG", "S_K", "S_P", "Fe_maet", "S_Urea", "S_LD", "S_Ca", "fS_TIBC", "fS_Jaern", "S_Alp", "S_Urat", "S_FAMN", "S_Hapt", "fS_Gluk")
+
+# Correct the initialization of HR_BA_adrd data frame
+HR_BM <- data.frame(
+  BA = rep(BM, each = 2),  # Repeat each BA measure twice
+  outcome = rep("Mortality", times = length(BM) * 2),
+  model = rep(c("Gender-adjusted model", "Multivariable model"), times = length(BM)),
+  beta = NA, se = NA, HR = NA, lb = NA, ub = NA, p = NA, p_PH_BA = NA, global_p_PH_BA = NA,
+  concordance = NA  # Add a column for the concordance index
+)
+
+for (j in 1:length(BM)) {
+  # Gender-adjusted model
+  fit_gender <- coxph(as.formula(paste("Surv(AgeAtFirstDate, AgeAtLastDate, status) ~", BM[j], "+ gender")), data = to1po2)
+  coef_gender <- summary(fit_gender)
+  row_index_gender <- (j * 2) - 1
+  HR_BM[row_index_gender, c(4, 5, 9, 12)] <- c(coef_gender$coefficients[1, c(1, 3, 5)], coef_gender$concordance[1])
+  HR_BM[row_index_gender, 6:8] <- coef_gender$conf.int[1, c(1, 3, 4)]
+  HR_BM[row_index_gender, 10] <- cox.zph(fit_gender)$table[1, 3]
+  HR_BM[row_index_gender, 11] <- cox.zph(fit_gender)$table[3, 3]
+  
+  # Multivariable model
+  fit_multivariable <- coxph(as.formula(paste("Surv(AgeAtFirstDate, AgeAtLastDate, status) ~", BM[j], "+ gender + income_bins + NewUtbNiva")), data = to1po2)
+  coef_multivariable <- summary(fit_multivariable)
+  row_index_multivariable <- j * 2
+  HR_BM[row_index_multivariable, c(4, 5, 9, 12)] <- c(coef_multivariable$coefficients[1, c(1, 3, 5)], coef_multivariable$concordance[1])
+  HR_BM[row_index_multivariable, 6:8] <- coef_multivariable$conf.int[1, c(1, 3, 4)]
+  HR_BM[row_index_multivariable, 10] <- cox.zph(fit_multivariable)$table[1, 3]
+  HR_BM[row_index_multivariable, 11] <- cox.zph(fit_multivariable)$table[3, 3]
+}
+
+#HR_BM <- HR_BM
+
+# Print the modified HR_BA_adrd data frame
+print(HR_BM)
+```
+Again but different timescale
+```{r}
+# Biomarkers measures to be tested against mortality
+BM <- c("S_Alb", "S_Krea", "TC", "TG", "S_K", "S_P", "Fe_maet", "S_Urea", "S_LD", "S_Ca", "fS_TIBC", "fS_Jaern", "S_Alp", "S_Urat", "S_FAMN", "S_Hapt", "fS_Gluk")
+
+# Correct the initialization of HR_BA_adrd data frame
+HR_BM <- data.frame(
+  BA = rep(BM, each = 2),  # Repeat each BA measure twice
+  outcome = rep("Mortality", times = length(BM) * 2),
+  model = rep(c("Gender-adjusted model", "Multivariable model"), times = length(BM)),
+  beta = NA, se = NA, HR = NA, lb = NA, ub = NA, p = NA, p_PH_BA = NA, global_p_PH_BA = NA,
+  concordance = NA  # Add a column for the concordance index
+)
+
+for (j in 1:length(BM)) {
+  # Gender-adjusted model
+  fit_gender <- coxph(as.formula(paste("Surv(time, status) ~", BM[j], "+ gender")), data = to1po2)
+  coef_gender <- summary(fit_gender)
+  row_index_gender <- (j * 2) - 1
+  HR_BM[row_index_gender, c(4, 5, 9, 12)] <- c(coef_gender$coefficients[1, c(1, 3, 5)], coef_gender$concordance[1])
+  HR_BM[row_index_gender, 6:8] <- coef_gender$conf.int[1, c(1, 3, 4)]
+  HR_BM[row_index_gender, 10] <- cox.zph(fit_gender)$table[1, 3]
+  HR_BM[row_index_gender, 11] <- cox.zph(fit_gender)$table[3, 3]
+  
+  # Multivariable model
+  fit_multivariable <- coxph(as.formula(paste("Surv(time, status) ~", BM[j], "+ gender + income_bins + NewUtbNiva")), data = to1po2)
+  coef_multivariable <- summary(fit_multivariable)
+  row_index_multivariable <- j * 2
+  HR_BM[row_index_multivariable, c(4, 5, 9, 12)] <- c(coef_multivariable$coefficients[1, c(1, 3, 5)], coef_multivariable$concordance[1])
+  HR_BM[row_index_multivariable, 6:8] <- coef_multivariable$conf.int[1, c(1, 3, 4)]
+  HR_BM[row_index_multivariable, 10] <- cox.zph(fit_multivariable)$table[1, 3]
+  HR_BM[row_index_multivariable, 11] <- cox.zph(fit_multivariable)$table[3, 3]
+}
+
+#HR_BM <- HR_BM
+
+# Print the modified HR_BA_adrd data frame
+print(HR_BM)
+```
+
+## Per gender
+```{r}
+BM <- c("S_Alb", "S_Krea", "TC", "TG", "S_K", "S_P", "Fe_maet", "S_Urea", "S_LD", "S_Ca", "fS_TIBC", "fS_Jaern", "S_Alp", "S_Urat", "S_FAMN", "S_Hapt", "fS_Gluk")
+
+# Initialize HR_BA data frame
+HR_BM_g <- data.frame(
+  BA = rep(BM, each = 2),
+  Gender = rep(c("Men", "Women"), times = length(BM)),
+  model = rep("BA measurm. per gender", times = 2 * length(BM)),
+  beta = NA, se = NA, HR = NA,
+  CI_lower = NA, CI_upper = NA, P_PH_BA = NA, global_p_PH_BA = NA, concordance = NA, N = NA
+)
+
+for (j in 1:length(BM)) {
+  for (gender_group in c("Men", "Women")) {
+    # Subset data based on new_gender
+    data_subset <- to1po2[to1po2$new_gender == gender_group, ]
+
+    # Fit Cox model for the BA measure (without 'new_gender' as a covariate)
+    fit_gender <- coxph(as.formula(paste("Surv(AgeAtFirstDate, AgeAtLastDate, status) ~", BM[j])), data = data_subset)
+    coef_gender <- summary(fit_gender)
+
+    # Determine row index for updating HR_BA
+    row_index <- if (gender_group == "Men") (j - 1) * 2 + 1 else j * 2
+
+    # Update HR_BA with model results
+    HR_BM_g[row_index, c("beta", "se", "HR")] <- coef_gender$coefficients[1, c(1, 3, 2)]
+    HR_BM_g[row_index, c("CI_lower", "CI_upper")] <- coef_gender$conf.int[1, c(3, 4)]
+    HR_BM_g[row_index, "P_PH_BA"] <- cox.zph(fit_gender)$table[1, 3]
+    HR_BM_g[row_index, "global_p_PH_BA"] <- cox.zph(fit_gender)$table[2, 3]
+    HR_BM_g[row_index, "concordance"] <- coef_gender$concordance[1]
+    HR_BM_g[row_index, "N"] <- coef_gender$n
+  }
+}
+
+#HR_BM_g <- HR_BM_g
+
+# Print the updated HR_BA data frame
+print(HR_BM_g)
+```
+## Per age group 
+```{r}
+BM <- c("S_Alb", "S_Krea", "TC", "TG", "S_K", "S_P", "Fe_maet", "S_Urea", "S_LD", "S_Ca", "fS_TIBC", "fS_Jaern", "S_Alp", "S_Urat", "S_FAMN", "S_Hapt", "fS_Gluk")
+
+# Initialize HR_BA data frame
+HR_BM_ag <- data.frame(
+  BA = rep(BM, each = 2),
+  AgeGroup = rep(c("Under 60", "60 and over"), times = length(BM)),
+  model = rep("Other_agegroup", times = 2 * length(BM)),
+  beta = NA, se = NA, HR = NA,
+  CI_lower = NA, CI_upper = NA, P_PH_BA = NA, global_p_PH_BA = NA, concordance = NA, N = NA
+)
+
+for (j in 1:length(BM)) {
+  # Loop over each BA measure
+  for (age_group in c("Under 60", "60 and over")) {
+    # Subset data based on age group
+    if (age_group == "Under 60") {
+      data_subset <- to1po2[to1po2$AgeAtLastDate < 60, ]
+    } else {
+      data_subset <- to1po2[to1po2$AgeAtLastDate >= 60, ]
+    }
+
+    # Fit gender-adjusted model
+    fit_gender <- coxph(as.formula(paste("Surv(AgeAtFirstDate, AgeAtLastDate, status) ~", BM[j], "+ gender")), data = data_subset)
+    coef_gender <- summary(fit_gender)
+
+    # Determine row index for updating HR_BA
+    if (age_group == "Under 60") {
+      row_index <- (j - 1) * 2 + 1
+    } else {
+      row_index <- j * 2
+    }
+    
+    # Update HR_BA with model results
+    HR_BM_ag[row_index, c("beta", "se", "HR")] <- coef_gender$coefficients[1, c(1, 3, 2)]
+    HR_BM_ag[row_index, c("CI_lower", "CI_upper")] <- coef_gender$conf.int[1, c(3, 4)]
+    HR_BM_ag[row_index, "P_PH_BA"] <- cox.zph(fit_gender)$table[1, 3]
+    HR_BM_ag[row_index, "global_p_PH_BA"] <- cox.zph(fit_gender)$table[3, 3]
+    HR_BM_ag[row_index, "concordance"] <- coef_gender$concordance[1]
+    HR_BM_ag[row_index, "N"] <- coef_gender$n
+  }
+}
+
+#HR_BM_ag <- HR_BM_ag
+
+# Print the updated HR_BA data frame
+print(HR_BM_ag)
+```
+
+#============================================
+
+#============================================
+
+
+BA mortality validation
+```{r}
+# Biomarkers measures to be tested against mortality
+BioAge_BA <- c("kdm", "kdm_advance", "kdm_res", "phenoage", "phenoage_advance","phenoage_res", "hd", "hd_res","hd_log", "hd_log_res", "age", "AgeAtFirstDate")
+
+# Correct the initialization of HR_BA_adrd data frame
+HR_BA_measurement <- data.frame(
+  BA = rep(BioAge_BA, each = 2),  # Repeat each BA measure twice
+  outcome = rep("Mortality", times = length(BioAge_BA) * 2),
+  model = rep(c("Gender-adjusted model", "Multivariable model"), times = length(BioAge_BA)),
+  beta = NA, se = NA, HR = NA, lb = NA, ub = NA, p = NA, p_PH_BA = NA, global_p_PH_BA = NA,
+  concordance = NA  # Add a column for the concordance index
+)
+
+for (j in 1:length(BioAge_BA)) {
+  # Gender-adjusted model
+  fit_gender <- coxph(as.formula(paste("Surv(AgeAtFirstDate, AgeAtLastDate, status) ~", BioAge_BA[j], "+ gender")), data = to1po2)
+  coef_gender <- summary(fit_gender)
+  row_index_gender <- (j * 2) - 1
+  HR_BA_measurement[row_index_gender, c(4, 5, 9, 12)] <- c(coef_gender$coefficients[1, c(1, 3, 5)], coef_gender$concordance[1])
+  HR_BA_measurement[row_index_gender, 6:8] <- coef_gender$conf.int[1, c(1, 3, 4)]
+  HR_BA_measurement[row_index_gender, 10] <- cox.zph(fit_gender)$table[1, 3]
+  HR_BA_measurement[row_index_gender, 11] <- cox.zph(fit_gender)$table[3, 3]
+  
+  # Multivariable model
+  fit_multivariable <- coxph(as.formula(paste("Surv(AgeAtFirstDate, AgeAtLastDate, status) ~", BioAge_BA[j], "+ gender + income_bins + NewUtbNiva")), data = to1po2)
+  coef_multivariable <- summary(fit_multivariable)
+  row_index_multivariable <- j * 2
+  HR_BA_measurement[row_index_multivariable, c(4, 5, 9, 12)] <- c(coef_multivariable$coefficients[1, c(1, 3, 5)], coef_multivariable$concordance[1])
+  HR_BA_measurement[row_index_multivariable, 6:8] <- coef_multivariable$conf.int[1, c(1, 3, 4)]
+  HR_BA_measurement[row_index_multivariable, 10] <- cox.zph(fit_multivariable)$table[1, 3]
+  HR_BA_measurement[row_index_multivariable, 11] <- cox.zph(fit_multivariable)$table[3, 3]
+}
+
+HR_BA_measurement <- HR_BA_measurement
+
+# Print the modified HR_BA_adrd data frame
+print(HR_BA_measurement)
+```
+##Per gender
+```{r}
+BioAge_BA <- c("kdm", "kdm_advance", "kdm_res", "phenoage", "phenoage_advance","phenoage_res", "hd", "hd_res","hd_log", "hd_log_res", "age", "AgeAtFirstDate")
+
+# Initialize HR_BA data frame
+HR_BA_measurement_g <- data.frame(
+  BA = rep(BA_measures, each = 2),
+  Gender = rep(c("Men", "Women"), times = length(BA_measures)),
+  model = rep("BA measurm. per gender", times = 2 * length(BA_measures)),
+  beta = NA, se = NA, HR = NA,
+  CI_lower = NA, CI_upper = NA, P_PH_BA = NA, global_p_PH_BA = NA, concordance = NA, N = NA
+)
+
+for (j in 1:length(BA_measures)) {
+  for (gender_group in c("Men", "Women")) {
+    # Subset data based on new_gender
+    data_subset <- to1po2[to1po2$new_gender == gender_group, ]
+
+    # Fit Cox model for the BA measure (without 'new_gender' as a covariate)
+    fit_gender <- coxph(as.formula(paste("Surv(AgeAtFirstDate, AgeAtLastDate, status) ~", BioAge_BA[j])), data = data_subset)
+    coef_gender <- summary(fit_gender)
+
+    # Determine row index for updating HR_BA
+    row_index <- if (gender_group == "Men") (j - 1) * 2 + 1 else j * 2
+
+    # Update HR_BA with model results
+    HR_BA_measurement_g[row_index, c("beta", "se", "HR")] <- coef_gender$coefficients[1, c(1, 3, 2)]
+    HR_BA_measurement_g[row_index, c("CI_lower", "CI_upper")] <- coef_gender$conf.int[1, c(3, 4)]
+    HR_BA_measurement_g[row_index, "P_PH_BA"] <- cox.zph(fit_gender)$table[1, 3]
+    HR_BA_measurement_g[row_index, "global_p_PH_BA"] <- cox.zph(fit_gender)$table[2, 3]
+    HR_BA_measurement_g[row_index, "concordance"] <- coef_gender$concordance[1]
+    HR_BA_measurement_g[row_index, "N"] <- coef_gender$n
+  }
+}
+
+#HR_BA_measurement_g <- HR_BA_measurement_g
+
+# Print the updated HR_BA data frame
+print(HR_BA_measurement_g)
+```
+## Per age group
+```{r}
+BioAge_BA <- c("kdm", "kdm_advance", "kdm_res", "phenoage", "phenoage_advance","phenoage_res", "hd", "hd_res","hd_log", "hd_log_res", "age", "AgeAtFirstDate")
+
+# Initialize HR_BA data frame
+HR_BA_ag <- data.frame(
+  BA = rep(BioAge_BA, each = 2),
+  AgeGroup = rep(c("Under 60", "60 and over"), times = length(BioAge_BA)),
+  model = rep("Other_agegroup", times = 2 * length(BioAge_BA)),
+  beta = NA, se = NA, HR = NA,
+  CI_lower = NA, CI_upper = NA, P_PH_BA = NA, global_p_PH_BA = NA, concordance = NA, N = NA
+)
+
+for (j in 1:length(BioAge_BA)) {
+  # Loop over each BA measure
+  for (age_group in c("Under 60", "60 and over")) {
+    # Subset data based on age group
+    if (age_group == "Under 60") {
+      data_subset <- to1po2[to1po2$AgeAtLastDate < 60, ]
+    } else {
+      data_subset <- to1po2[to1po2$AgeAtLastDate >= 60, ]
+    }
+
+    # Fit gender-adjusted model
+    fit_gender <- coxph(as.formula(paste("Surv(AgeAtFirstDate, AgeAtLastDate, status) ~", BioAge_BA[j], "+ gender")), data = data_subset)
+    coef_gender <- summary(fit_gender)
+
+    # Determine row index for updating HR_BA
+    if (age_group == "Under 60") {
+      row_index <- (j - 1) * 2 + 1
+    } else {
+      row_index <- j * 2
+    }
+    
+    # Update HR_BA with model results
+    HR_BA_ag[row_index, c("beta", "se", "HR")] <- coef_gender$coefficients[1, c(1, 3, 2)]
+    HR_BA_ag[row_index, c("CI_lower", "CI_upper")] <- coef_gender$conf.int[1, c(3, 4)]
+    HR_BA_ag[row_index, "P_PH_BA"] <- cox.zph(fit_gender)$table[1, 3]
+    HR_BA_ag[row_index, "global_p_PH_BA"] <- cox.zph(fit_gender)$table[3, 3]
+    HR_BA_ag[row_index, "concordance"] <- coef_gender$concordance[1]
+    HR_BA_ag[row_index, "N"] <- coef_gender$n
+  }
+}
+
+#HR_BM_ag <- HR_BM_ag
+
+# Print the updated HR_BA data frame
+print(HR_BA_ag)
+```
+###============================================###
+Comparing AMORIS and NHANES3 directly 
+###============================================###
+Here the timescale is different, time in person months
+
+NHANES
+```{r}
+# Biomarkers measures to be tested against mortality, only the equivalent ones
+BM <- c("albumin", "bun", "uap", "creat", "trig", "totchol")
+
+# Correct the initialization of HR_BA_adrd data frame
+HR_BMNHAM <- data.frame(
+  BA = rep(BM, each = 2),  # Repeat each BA measure twice
+  outcome = rep("Mortality", times = length(BM) * 1),
+  model = rep(c("Gender-adjusted NHANES", "Gender-adjusted AMORIS"), times = length(BM)),
+  beta = NA, se = NA, HR = NA, lb = NA, ub = NA, p = NA, p_PH_BA = NA, global_p_PH_BA = NA,
+  concordance = NA  # Add a column for the concordance index
+)
+
+#skip multivariate model since it's difficult to adjust to equivalent covariates
+#you have to run the lines that converts the name for Kön and Ålder etc for amoris, you can find it further down...also time and status
+
+for (j in 1:length(BM)) {
+  # Gender-adjusted model NHANES3
+  fit_gender <- coxph(as.formula(paste("Surv(time, status) ~", BM[j], "+ gender")), data = NHANES3)
+  coef_gender <- summary(fit_gender)
+  row_index_gender <- (j * 2) - 1
+  HR_BMNHAM[row_index_gender, c(4, 5, 9, 12)] <- c(coef_gender$coefficients[1, c(1, 3, 5)], coef_gender$concordance[1])
+  HR_BMNHAM[row_index_gender, 6:8] <- coef_gender$conf.int[1, c(1, 3, 4)]
+  HR_BMNHAM[row_index_gender, 10] <- cox.zph(fit_gender)$table[1, 3]
+  HR_BMNHAM[row_index_gender, 11] <- cox.zph(fit_gender)$table[3, 3]
+  
+  # Gender-adjusted model AMORIS
+  fit_multivariable <- coxph(as.formula(paste("Surv(time, status) ~", BM[j], "+ gender")), data = amoris)
+  coef_multivariable <- summary(fit_multivariable)
+  row_index_multivariable <- j * 2
+  HR_BMNHAM[row_index_multivariable, c(4, 5, 9, 12)] <- c(coef_multivariable$coefficients[1, c(1, 3, 5)], coef_multivariable$concordance[1])
+  HR_BMNHAM[row_index_multivariable, 6:8] <- coef_multivariable$conf.int[1, c(1, 3, 4)]
+  HR_BMNHAM[row_index_multivariable, 10] <- cox.zph(fit_multivariable)$table[1, 3]
+  HR_BMNHAM[row_index_multivariable, 11] <- cox.zph(fit_multivariable)$table[3, 3]
+}
+
+#HR_BMNHAM <- HR_BMNHAM
+
+# Print the modified HR_BA_adrd data frame
+print(HR_BMNHAM)
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+
+# Assuming HR_BMNHAM is your dataframe and is correctly populated
+
+# Add a unique identifier combining BA and model
+HR_BMNHAM <- HR_BMNHAM %>%
+  mutate(unique_id = paste(BA, model, sep = " - "))
+
+# Creating the forest plot
+combined_forest_plot <- ggplot(HR_BMNHAM, aes(y = HR, x = as.factor(unique_id))) +
+  geom_point(aes(color = model), size = 3) +
+  geom_errorbar(aes(ymin = lb, ymax = ub), width = 0.2, size = 0.7) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "black", size = 0.7) +
+  theme_minimal() +
+  labs(title = "Comparison NHANES and AMORIS", y = "Hazard Ratio (HR)", x = "Biomarker - Model Type") +
+  coord_flip() +
+  theme(
+    legend.position = "bottom",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 10),
+    axis.title.x = element_blank()
+  )
+
+# Display the plot
+print(combined_forest_plot)
+
+
+```
+
+###============================================###
+THE CODE USING THE BUILT IN TABLE TO VALIDATE 
+AGAINST MORTALITY COMES FROM THE FILE
+validating_biomarkers.R 
+(based on BioAge table function)
+###============================================###
+
+#============================================
+BA measures
+#============================================
+
+## BA meausures in AMORIS against mortality
+```{r}
+
+### Tables
+agevar=names(c("kdm"="KDM",
+               "kdm_res"="KDM\nresidual",
+               "phenoage"="PhenoAge",
+               "phenoage_res"="PhenoAge\nresidual",
+               "hd_log"="HD (log)",
+               "age"="Chronological\nage"))
+label=c("kdm"="KDM",
+        "kdm_res"="KDM\nresidual",
+        "phenoage"="PhenoAge",
+        "phenoage_res"="PhenoAge\nresidual",
+        "hd_log"="HD (log)",
+        "age"="Chronological\nage")
+# instead of table_surv(to1po2, agevar, label) run the code below since we don't have race
+
+dat = to1po2 %>%
+  group_by(gender) %>%
+  mutate_at(vars(all_of(agevar)), list(~scale(.))) %>%
+  ungroup() %>%
+  mutate(gender = as.factor(gender),
+         age_cat = ifelse(age<=65, "yes", "no"))
+
+#full sample
+table1 = surv_res(dat, agevar, covar = c("age", "gender"))
+
+#gender stratification
+dat_gender = split(dat, dat$gender)
+table2 = lapply(dat_gender, function(x) surv_res(x, agevar, covar = "age"))
+table2 = do.call("rbind", table2)
+
+#age stratification
+dat_age = split(dat, dat$age_cat)
+table4 = surv_res(dat_age$yes, agevar, covar = c("age", "gender"))
+
+#combine tables
+table = rbind(table1,table2,table4) %>%
+  select(sample, everything())
+
+colnames(table) = c("sample",label)
+# 2,2,2,2,2,2,2
+#make final table
+htmlTable::htmlTable(table[,-1],
+                     rnames = table$sample,
+                     align = "llllll",
+                     rgroup = c("Full Sample", "Men", "Women", "Aged 65 and Younger"),
+                     n.rgroup = c(2,2,2,2),
+                     tspanner = c("Hazard Ratio (95% CI)",
+                                  "Stratified by Gender",
+                                  "People Aged 65 and Younger"),
+                     n.tspanner = c(2,4,2),
+                     cnames = colnames(table),
+                     css.rgroup = "font-weight: 900; text-align: left; font-size: .83em;",
+                     css.tspanner = "font-weight: 900; text-align: center; font-size: .83em;",
+                     css.cell = rbind(rep("width: 300px; font-size: .83em;", times=ncol(table)),
+                                      matrix("width: 300px; font-size: .83em;", ncol=ncol(table), nrow=nrow(table))),
+                     caption = "Table 1. Associations of biological aging measures with mortality. AMORIS.")
+
+
+
+#These differenced values were then standardized to have M=0, SD=1 separately for men and women within the analysis sample so that effect-sizes are denominated in terms of a sex-specific 1 SD unit increase in biological age advancement.
+#                   Models included covariates for chronological age and sex.
+#BioAge coefficients in the table are hazard ratios estimated from Cox proportional hazard regressions.
+#                     KDM Biological Age and Levine Phenotypic Age measures were differenced from chronological age for analysis (i.e. values = BA-CA).
+
+```
+
+## BA NHANES against mortality
+```{r}
+#select biological age variables
+agevar=names(c("kdm"="KDM",
+               "kdm_res"="KDM\nresidual",
+               "phenoage"="PhenoAge",
+               "phenoage_res"="PhenoAge\nresidual",
+               "hd_log"="HD (log)",
+               "age"="Chronological\nage"))
+label=c("kdm"="KDM",
+        "kdm_res"="KDM\nresidual",
+        "phenoage"="PhenoAge",
+        "phenoage_res"="PhenoAge\nresidual",
+        "hd_log"="HD (log)",
+        "age"="Chronological\nage")
+axis_type=get_axis_type(c("kdm"="KDM",
+                                   "kdm_res"="KDM\nresidual",
+                                   "phenoage"="PhenoAge",
+                                   "phenoage_res"="PhenoAge\nresidual",
+                                   "hd_log"="HD (log)",
+                                   "age"="Chronological\nage"))
+
+BA_residuals <- function(BA){
+  data = data %>% drop_na(BA)
+  # Basic model = regress on age alone
+  model <- parse(text = sprintf("lm(%s ~ ns(age, df = 3), data = data)", BA)) %>% eval()
+  model_predict <- ggpredict(model, terms = c("age"))
+  data[,"BA_res"] <- NA
+  data[!is.na(data[BA]),"BA_res"] <- resid(model)
+  return(residuals(model))
+}
+for(BA in c("kdm", "phenoage", "hd", "hd_log")){
+  BA_res <- paste0(BA, "_res")
+  data[,BA_res] = NA
+  data[!is.na(data[BA]),BA_res] <- BA_residuals(BA)
+}
+rm(list=c("BA","BA_res"))
+
+table_surv(data, agevar, label)
+```
+
+#============================================
+Eqivalent biomarkers
+#============================================
+
+NHANES3: The same biomarkers as amoris
+```{r}
+#NHANES3
+agevar <- c("albumin", "bun", "uap", "creat", "trig", "totchol", "age")
+label <- c("albumin", "bun", "uap", "creat", "trig", "totchol", "age"="Chronological \nage")
+
+# Assuming the dataset 'tolpo2' and the function 'surv_res' exist
+dat <- NHANES3 %>%
+  group_by(gender) %>%
+  mutate_at(vars(all_of(agevar)), list(~scale(.))) %>%
+  ungroup() %>%
+  mutate(
+    gender = as.factor(gender),
+    age_cat = ifelse(age <= 65, "yes", "no")
+  )
+
+# Full sample
+table1 <- surv_res(dat, agevar, covar = c("age", "gender"))
+
+# Gender stratification
+dat_gender <- split(dat, dat$gender)
+table2 <- lapply(dat_gender, function(x) surv_res(x, agevar, covar = "age"))
+table2 <- do.call("rbind", table2)
+
+# Age stratification (only under 65)
+dat_age_under_65 <- filter(dat, age_cat == "yes")
+table3 <- surv_res(dat_age_under_65, agevar, covar = c("age", "gender"))
+
+# Combine tables
+combined_table <- rbind(table1, table2, table3) %>%
+  select(sample, everything())
+colnames(combined_table) <- c("sample", label)
+
+# Now, assuming the combined_table is structured correctly, we can create the HTML table
+# Define the structure of the HTML table
+rgroups <- c("Full Sample", "Men", "Women", "Under 65")
+n_rgroups <- rep(2, length(rgroups)) # 2 rows for each group
+
+# Manually set the row names to reflect 'n' and 'Biomarker' for each category
+# Assuming there are 2 rows for each of the 4 categories in the 'combined_table'
+manual_rnames <- c("N", "Biomarker", "N", "Biomarker", "N", "Biomarker", "N", "Biomarker")
+
+# Create the HTML table with the manual row names
+html_table <- htmlTable(
+  combined_table[, -1], # Exclude the first column if it's an identifier column
+  rnames = manual_rnames,  # Manually set row names
+  align = "l",  # Align text to the left
+  rgroup = c("Full Sample", "Men", "Women", "Under 65"),
+  n.rgroup = rep(2, 4), # Two rows for each main category
+  tspanner = c("Hazard Ratio (95% CI)", "Stratified by Gender", "Under 65"),
+  n.tspanner = c(2, 4, 2), # Spanner header spans: 2 for Full Sample, 4 for Gender, 2 for Under 65
+  cnames = colnames(combined_table), # The column names for the table
+  css.rgroup = "font-weight: 900; text-align: left; font-size: 0.83em;", # CSS for rgroup
+  css.tspanner = "font-weight: 900; text-align: center; font-size: 0.83em;", # CSS for tspanner
+  css.cell = "padding: 0.5em; line-height: 1.5em;", # CSS for cells
+  caption = "Mortality Table with Biomarkers. NHANES3." # The caption for the table
+)
+
+# Display or save the HTML table as needed
+print(html_table)
+```
+
+## NHANES equivalent biomarkers in AMORIS against mortality
+```{r}
+# "albumin"="S_Alb"
+amoris$albumin <- (amoris$S_Alb)/10
+# "bun"="S_Urea"
+amoris$bun <- (amoris$S_Urea)*2.8082
+# "uap" = "S_Urat"
+amoris$uap <- (amoris$S_Urat)*0.0168
+# "creat"="S_Krea"
+amoris$creat <- (amoris$S_Krea)*0.0113
+# "trig"="TG"
+amoris$trig <- (amoris$TG)*87.7193
+# "totchol"="TC"
+amoris$totchol <- (amoris$TC)*38.6100
+### NHANES3 
+selected_biomarkers <- c("albumin", "bun", "uap", "creat", "trig", "totchol")
+
+#amoris
+agevar <- c("albumin", "bun", "uap", "creat", "trig", "totchol", "age")
+label <- c("albumin", "bun", "uap", "creat", "trig", "totchol", "age"="Chronological \nage")
+
+# Assuming the dataset 'tolpo2' and the function 'surv_res' exist
+dat <- amoris %>%
+  group_by(gender) %>%
+  mutate_at(vars(all_of(agevar)), list(~scale(.))) %>%
+  ungroup() %>%
+  mutate(
+    gender = as.factor(gender),
+    age_cat = ifelse(age <= 65, "yes", "no")
+  )
+
+# Full sample
+table1 <- surv_res(dat, agevar, covar = c("age", "gender"))
+
+# Gender stratification
+dat_gender <- split(dat, dat$gender)
+table2 <- lapply(dat_gender, function(x) surv_res(x, agevar, covar = "age"))
+table2 <- do.call("rbind", table2)
+
+# Age stratification (only under 65)
+dat_age_under_65 <- filter(dat, age_cat == "yes")
+table3 <- surv_res(dat_age_under_65, agevar, covar = c("age", "gender"))
+
+# Combine tables
+combined_table <- rbind(table1, table2, table3) %>%
+  select(sample, everything())
+colnames(combined_table) <- c("sample", label)
+
+# Now, assuming the combined_table is structured correctly, we can create the HTML table
+# Define the structure of the HTML table
+rgroups <- c("Full Sample", "Men", "Women", "Under 65")
+n_rgroups <- rep(2, length(rgroups)) # 2 rows for each group
+
+# Manually set the row names to reflect 'n' and 'Biomarker' for each category
+# Assuming there are 2 rows for each of the 4 categories in the 'combined_table'
+manual_rnames <- c("N", "Biomarker", "N", "Biomarker", "N", "Biomarker", "N", "Biomarker")
+
+# Create the HTML table with the manual row names
+html_table <- htmlTable(
+  combined_table[, -1], # Exclude the first column if it's an identifier column
+  rnames = manual_rnames,  # Manually set row names
+  align = "l",  # Align text to the left
+  rgroup = c("Full Sample", "Men", "Women", "Under 65"),
+  n.rgroup = rep(2, 4), # Two rows for each main category
+  tspanner = c("Hazard Ratio (95% CI)", "Stratified by Gender", "Under 65"),
+  n.tspanner = c(2, 4, 2), # Spanner header spans: 2 for Full Sample, 4 for Gender, 2 for Under 65
+  cnames = colnames(combined_table), # The column names for the table
+  css.rgroup = "font-weight: 900; text-align: left; font-size: 0.83em;", # CSS for rgroup
+  css.tspanner = "font-weight: 900; text-align: center; font-size: 0.83em;", # CSS for tspanner
+  css.cell = "padding: 0.5em; line-height: 1.5em;", # CSS for cells
+  caption = "Mortality Table with Biomarkers. AMORIS (NHANES equivalent biomarkers)." # The caption for the table
+)
+
+# Display or save the HTML table as needed
+print(html_table)
+
+```
+
+#============================================
+All biomarkers
+#============================================
+
+## All biomarkers AMORIS against mortality
+```{r}
+### lets replace BioAge
+# Biomarkers and labels
+agevar <- c("S_Alb", "S_Krea", "TG", "TC", "S_Urea", "S_LD", "S_Ca", "S_FAMN", "S_Hapt", "fS_Gluk", "age")
+label <- c("S_Alb"="S_Alb", "S_Krea"="S_Krea", "TG"="TG", "TC"="TC", "S_Urea"="S_Urea", 
+           "S_LD"="S_LD", "S_Ca"="S_Ca", "S_FAMN"="S_FAMN", "S_Hapt"="S_Hapt", 
+           "fS_Gluk"="fS_Gluk", "age"="Chronological \nage")
+
+# Assuming the dataset 'tolpo2' and the function 'surv_res' exist
+dat <- to1po2 %>%
+  group_by(gender) %>%
+  mutate_at(vars(all_of(agevar)), list(~scale(.))) %>%
+  ungroup() %>%
+  mutate(
+    gender = as.factor(gender),
+    age_cat = ifelse(age <= 65, "yes", "no")
+  )
+
+# Full sample
+table1 <- surv_res(dat, agevar, covar = c("age", "gender"))
+
+# Gender stratification
+dat_gender <- split(dat, dat$gender)
+table2 <- lapply(dat_gender, function(x) surv_res(x, agevar, covar = "age"))
+table2 <- do.call("rbind", table2)
+
+# Age stratification (only under 65)
+dat_age_under_65 <- filter(dat, age_cat == "yes")
+table3 <- surv_res(dat_age_under_65, agevar, covar = c("age", "gender"))
+
+# Combine tables
+combined_table <- rbind(table1, table2, table3) %>%
+  select(sample, everything())
+colnames(combined_table) <- c("sample", label)
+
+# Now, assuming the combined_table is structured correctly, we can create the HTML table
+# Define the structure of the HTML table
+rgroups <- c("Full Sample", "Men", "Women", "Under 65")
+n_rgroups <- rep(2, length(rgroups)) # 2 rows for each group
+
+# Manually set the row names to reflect 'n' and 'Biomarker' for each category
+# Assuming there are 2 rows for each of the 4 categories in the 'combined_table'
+manual_rnames <- c("N", "Biomarker", "N", "Biomarker", "N", "Biomarker", "N", "Biomarker")
+
+# Create the HTML table with the manual row names
+html_table <- htmlTable(
+  combined_table[, -1], # Exclude the first column if it's an identifier column
+  rnames = manual_rnames,  # Manually set row names
+  align = "l",  # Align text to the left
+  rgroup = c("Full Sample", "Men", "Women", "Under 65"),
+  n.rgroup = rep(2, 4), # Two rows for each main category
+  tspanner = c("Hazard Ratio (95% CI)", "Stratified by Gender", "Under 65"),
+  n.tspanner = c(2, 4, 2), # Spanner header spans: 2 for Full Sample, 4 for Gender, 2 for Under 65
+  cnames = colnames(combined_table), # The column names for the table
+  css.rgroup = "font-weight: 900; text-align: left; font-size: 0.83em;", # CSS for rgroup
+  css.tspanner = "font-weight: 900; text-align: center; font-size: 0.83em;", # CSS for tspanner
+  css.cell = "padding: 0.5em; line-height: 1.5em;", # CSS for cells
+  caption = "Mortality Table with Biomarkers" # The caption for the table
+)
+
+# Display or save the HTML table as needed
+print(html_table)
+```
+
+## The original NHANES markers against mortality
+```{r}
+### lets replace BioAge
+# Biomarkers and labels
+agevar <- c("albumin","alp","lncrp","totchol","creat","hba1c","sbp","bun","uap","lymph","mcv","wbc", "age")
+label <- c("albumin","alp","lncrp","totchol","creat","hba1c","sbp","bun","uap","lymph","mcv","wbc", "age"="Chronological \nage")
+
+# Assuming the dataset 'tolpo2' and the function 'surv_res' exist
+dat <- NHANES3 %>%
+  group_by(gender) %>%
+  mutate_at(vars(all_of(agevar)), list(~scale(.))) %>%
+  ungroup() %>%
+  mutate(
+    gender = as.factor(gender),
+    age_cat = ifelse(age <= 65, "yes", "no")
+  )
+
+# Full sample
+table1 <- surv_res(dat, agevar, covar = c("age", "gender"))
+
+# Gender stratification
+dat_gender <- split(dat, dat$gender)
+table2 <- lapply(dat_gender, function(x) surv_res(x, agevar, covar = "age"))
+table2 <- do.call("rbind", table2)
+
+# Age stratification (only under 65)
+dat_age_under_65 <- filter(dat, age_cat == "yes")
+table3 <- surv_res(dat_age_under_65, agevar, covar = c("age", "gender"))
+
+# Combine tables
+combined_table <- rbind(table1, table2, table3) %>%
+  select(sample, everything())
+colnames(combined_table) <- c("sample", label)
+
+# Now, assuming the combined_table is structured correctly, we can create the HTML table
+# Define the structure of the HTML table
+rgroups <- c("Full Sample", "Men", "Women", "Under 65")
+n_rgroups <- rep(2, length(rgroups)) # 2 rows for each group
+
+# Manually set the row names to reflect 'n' and 'Biomarker' for each category
+# Assuming there are 2 rows for each of the 4 categories in the 'combined_table'
+manual_rnames <- c("N", "Biomarker", "N", "Biomarker", "N", "Biomarker", "N", "Biomarker")
+
+# Create the HTML table with the manual row names
+html_table <- htmlTable(
+  combined_table[, -1], # Exclude the first column if it's an identifier column
+  rnames = manual_rnames,  # Manually set row names
+  align = "l",  # Align text to the left
+  rgroup = c("Full Sample", "Men", "Women", "Under 65"),
+  n.rgroup = rep(2, 4), # Two rows for each main category
+  tspanner = c("Hazard Ratio (95% CI)", "Stratified by Gender", "Under 65"),
+  n.tspanner = c(2, 4, 2), # Spanner header spans: 2 for Full Sample, 4 for Gender, 2 for Under 65
+  cnames = colnames(combined_table), # The column names for the table
+  css.rgroup = "font-weight: 900; text-align: left; font-size: 0.83em;", # CSS for rgroup
+  css.tspanner = "font-weight: 900; text-align: center; font-size: 0.83em;", # CSS for tspanner
+  css.cell = "padding: 0.5em; line-height: 1.5em;", # CSS for cells
+  caption = "Mortality Table with Biomarkers. NHANES3 (original biomarkers)." # The caption for the table
+)
+
+# Display or save the HTML table as needed
+print(html_table)
+```
+
