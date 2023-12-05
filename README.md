@@ -10,5 +10,5 @@ Calculating_BA.nb.html: Calculating biological age in three ways (KDM, Phenoage,
 
 Association.nb.html: looking at the association between biological age and ADRD, as well as ADRD subtypes such as alzheimers and vascular dementia. 
 
-![Alt text](/images/overview.png)
+![Alt text](/images/overview2)
 
