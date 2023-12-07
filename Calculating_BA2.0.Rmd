@@ -1,0 +1,424 @@
+---
+title: "Calculating BA"
+output: html_notebook
+---
+Previously we have inspected the data in Inspecting_data.rmd...
+
+We start with preparing the data, so that we don't have to run data inspection file.
+
+```{r}
+options(repos = "http://nexus.ki.se/repository/cran.r-project.org")
+.libPaths("W:/C6_AmorisGuest/Sara Hagg/Karolina Gustavsson/shun_trial/lib")
+source("W:/C6_AmorisGuest/Sara Hagg/Karolina Gustavsson/shun_trial/function.R")
+
+library(tidyverse)
+library(flexsurv)
+library(haven)
+library(survival)
+library(broom)
+library(ggplot2)
+library(patchwork)
+library(grid)
+library(gridExtra)
+library(checkmate) 
+library(htmlTable)
+library(survey)
+library(tidyr)
+library(dplyr)
+library(psych)
+library(splines)
+library(ggeffects)
+library(patchwork)
+library(tableone) 
+library(gridExtra)
+library(ggtext)
+library(gt)
+library(stringr)
+library(corrplot)
+library(lubridate)
+```
+
+```{r}
+amoris <- read_sas("W:/C6_AmorisGuest/Sara Hagg/Karolina Gustavsson/Data/StudyPop.sas7bdat")
+```
+
+```{r}
+#select our 17 biomarkers
+biomarkers <- c("S_Alb", "S_Krea", "TC", "TG", "S_K", "S_P", "Fe_maet", "S_Urea", "S_LD", "S_Ca", "fS_TIBC", "fS_Jaern", "S_Alp", "S_Urat", "S_FAMN", "S_Hapt", "fS_Gluk")
+
+AMORIS <- amoris %>%
+  group_by(Kon) %>%
+  filter(
+    if_else(
+      Kon == 1, 
+      across(all_of(biomarkers), ~ .x > mean(.x, na.rm = TRUE) - 5 * sd(.x, na.rm = TRUE) & .x < mean(.x, na.rm = TRUE) + 5 * sd(.x, na.rm = TRUE)),
+      across(all_of(biomarkers), ~ .x > mean(.x, na.rm = TRUE) - 5 * sd(.x, na.rm = TRUE) & .x < mean(.x, na.rm = TRUE) + 5 * sd(.x, na.rm = TRUE))
+    )
+  ) %>%
+  ungroup()
+
+AMORIS <- AMORIS[complete.cases(AMORIS[, biomarkers]), ]
+
+rm(biomarkers)
+```
+
+
+Changing colneames and adding status and time
+```{r}
+colnames(AMORIS)[colnames(AMORIS) == "Kon"] <- "gender"
+colnames(AMORIS)[colnames(AMORIS) == "Alder"] <- "age"
+colnames(AMORIS)[colnames(AMORIS) == "Id"] <- "sampleID"
+
+AMORIS <- AMORIS %>%
+  mutate(status = ifelse(is.na(DODSDATn), 0, 1)) %>%
+  mutate(time = as.numeric(difftime(lastDate, firstDate, units = "weeks")) / 4.33)
+
+negative_counts <- sum(AMORIS$time < 0)
+print(paste("Number of negative survival times:", negative_counts))
+
+# Filtering out negative times
+AMORIS <- AMORIS %>% filter(time >= 0)
+```
+```{r}
+rm(negative_counts)
+```
+
+
+=========================================================================================
+HERE WE START WITH BIOAGE
+=========================================================================================
+
+
+Now we know which biomarkers to use in the BA analysis
+```{r}
+#over 0.1 separatley for men and women, S_Ca is rounded up
+biomarkers = c("S_Alb", "S_Krea", "TC", "TG", "S_K", "S_Urea", "S_LD", "S_Ca", "S_Urat", "S_FAMN", "S_Hapt", "fS_Gluk") 
+```
+
+Making our test set 
+```{r}
+## Making our training set and testing set
+# 18 825 by checking obs when reading in the data frame, but since they trained on 30-75 the actual number is 12535
+set.seed(123) # Setting a seed for reproducibility
+small_amoris_cohort <- AMORIS[sample(nrow(AMORIS), 12535), ]
+dim(small_amoris_cohort) # Check the dimensions
+# Get SampleID of the selected cohort
+selected_ids <- small_amoris_cohort$sampleID
+# Get the SampleID of the rest of the cohort
+rest_ids <- setdiff(AMORIS$sampleID, selected_ids)
+# Filter the original data frame using these IDs to get the_rest_of_amoris
+the_rest_of_amoris <- AMORIS[AMORIS$sampleID %in% rest_ids, ]
+# Check the dimensions of the new data frames
+dim(small_amoris_cohort)
+dim(the_rest_of_amoris)
+
+rm(rest_ids)
+```
+
+
+
+KDM
+```{r}
+## KDM
+train_f = kdm_calc(small_amoris_cohort %>%
+                     filter(age >=  25 & age <= 75, gender ==2),
+                   biomarkers, fit = NULL, s_ba2 = NULL)
+train_m = kdm_calc(small_amoris_cohort %>%
+                     filter(age >= 25 & age <= 75, gender ==1),
+                   biomarkers, fit = NULL, s_ba2 = NULL)
+kdm_f = kdm_calc(the_rest_of_amoris %>%
+                   filter (age >= 25 & age <= 75, gender ==2), #age >= 25 & age <= 75
+                 biomarkers,
+                 fit = train_f$fit,
+                 s_ba2 = train_f$fit$s_ba2)
+kdm_m = kdm_calc(the_rest_of_amoris %>%
+                   filter (age >= 25 & age <= 75, gender ==1), #age >= 25 & age <= 75
+                 biomarkers,
+                 fit = train_m$fit,
+                 s_ba2 = train_m$fit$s_ba2)
+to1po2_kdm = rbind(kdm_f$data,kdm_m$data)
+
+rm(train_f)
+rm(train_m)
+rm(kdm_f)
+rm(kdm_m)
+```
+
+Plotting kdm sep. just to check
+```{r}
+agevar = c("kdm")
+label = c("Modified-KDM\nBiological Age")
+plot_ba(to1po2_kdm, agevar, label)
+```
+
+
+
+Phenoage
+```{r}
+train = phenoage_calc(small_amoris_cohort, biomarkers)
+#Project into the AMORIS_2
+phenoage = phenoage_calc(the_rest_of_amoris, biomarkers, fit = train$fit)
+#Extract phenoage dataset, trained on 1 projected on 2 = to1po2, previously data
+to1po2_phe = (phenoage$data)
+
+rm(phenoage)
+rm(train)
+```
+
+Plotting phenoage separatley 
+```{r}
+agevar = c("phenoage")
+label = c("Modified-Phe\nBiological Age")
+plot_ba(to1po2_phe, agevar, label)
+```
+ 
+ HD 
+```{r}
+#using 20-30 year olds as a reference range
+
+hd_f = hd_calc (the_rest_of_amoris %>%
+                  filter (gender ==2),
+                small_amoris_cohort %>%
+                  filter (gender ==2 & age >= 20 & age <= 30),
+                biomarkers)
+hd_m = hd_calc (the_rest_of_amoris %>%
+                  filter (gender ==1),
+                small_amoris_cohort %>%
+                  filter (gender ==1 & age >= 20 & age <= 30),
+                biomarkers)
+
+#Extract HD dataset
+to1po2_hd = rbind(hd_f$data, hd_m$data)
+
+rm(hd_f)
+rm(hd_m)
+```
+ Merging
+```{r}
+to1po2 = left_join(the_rest_of_amoris, to1po2_hd[, c("sampleID", "hd", "hd_log")], by = "sampleID") %>%
+  left_join(., to1po2_kdm[, c("sampleID", "kdm", "kdm_advance")], by = "sampleID") %>%
+  left_join(., to1po2_phe[, c("sampleID","phenoage","phenoage_advance")], by = "sampleID") 
+```
+ 
+ 
+  Plotting CA vs BA
+```{r}
+agevar_ap = c("kdm","phenoage","hd","hd_log")
+#prepare labels
+label_ap = c("KDM amoris\nBiological Age",
+             "phenoage amoris\nPhenotypic Age",
+             "Homeostatic\nDysregulation",
+             "Log\nHomeostatic\nDysregulation")
+#plot age vs bioage
+plot_ba(to1po2, agevar_ap, label_ap)
+```
+
+Residuals
+```{r}
+BA_residuals <- function(BA){
+  data = to1po2 %>% drop_na(BA)
+  # Basic model = regress on age alone
+  model <- parse(text = sprintf("lm(%s ~ ns(age, df = 3), data = data)", BA)) %>% eval()
+  model_predict <- ggpredict(model, terms = c("age"))
+  data[,"BA_res"] <- NA
+  data[!is.na(data[BA]),"BA_res"] <- resid(model)
+  return(residuals(model))
+}
+for(BA in c("kdm", "phenoage", "hd", "hd_log")){
+  BA_res <- paste0(BA, "_res")
+  to1po2[,BA_res] = NA
+  to1po2[!is.na(to1po2[BA]),BA_res] <- BA_residuals(BA)
+}
+rm(list=c("BA","BA_res"))
+```
+
+Correlation with BA, HAVE TO REDOOOOO THISSS!!!
+```{r}
+get_axis_type <- function(labels){
+  return(rep("float", length(labels)) %>% setNames(names(labels))) # Create function to generate axis_type variables for BAA plots
+}
+plot_baa(data=to1po2, 
+         agevar=names(c("kdm"="KDM",
+                        "kdm_res"="KDM\nresidual",
+                        "phenoage"="PhenoAge",
+                        "phenoage_res"="PhenoAge\nresidual",
+                        "hd_log"="HD (log)",
+                        "age"="Chronological\nage")), 
+         label=c("kdm"="KDM",
+                 "kdm_res"="KDM\nresidual",
+                 "phenoage"="PhenoAge",
+                 "phenoage_res"="PhenoAge\nresidual",
+                 "hd_log"="HD (log)",
+                 "age"="Chronological\nage"), 
+         axis_type=get_axis_type(c("kdm"="KDM",
+                                   "kdm_res"="KDM\nresidual",
+                                   "phenoage"="PhenoAge",
+                                   "phenoage_res"="PhenoAge\nresidual",
+                                   "hd_log"="HD (log)",
+                                   "age"="Chronological\nage")))
+
+```
+
+##Table of summary statistics! 
+Preparing varables
+```{r}
+# Calculate age at FirstDate in years
+to1po2$AgeAtFirstDate <- as.numeric(difftime(to1po2$firstDate, to1po2$FODDATn, units = "days") / 365.25)
+# Calculate age at LastDate in years
+to1po2$AgeAtLastDate <- as.numeric(difftime(to1po2$lastDate, to1po2$FODDATn, units = "days") / 365.25)
+```
+
+```{r}
+SveDem <- read_sas("W:/C6_AmorisGuest/Sara Hagg/Karolina Gustavsson/Data/SveDem.sas7bdat")
+SveDem_format <- read_sas("W:/C6_AmorisGuest/Sara Hagg/Karolina Gustavsson/Data/SveDem_fomats.sas7bdat")
+```
+
+```{r}
+all_codes <- c("304", "290", "290A", "F00", "305", "290B", "G30", "311A", "G308", "G309", "G301", "F009", "F002", "G300", "F001", "F000", "293", "290E", "F01", "293,1", "F019", "F012", "F018", "F013", "F011", "F010", "F0183", "306", "290X", "F02", "290W", "F03", "294B", "G311", "311B", "G318A", "311C", "F051", "311X", "F039", "F020", "F024", "F028", "290", "290,1", "F022", "F021", "F023", "F03-P")
+alzheimers_codes <- c("304", "290", "290A", "F00", "305", "290B", "G30", "311A", "G308", "G309", "G301", "F009", "F002", "G300", "F001", "F000")
+vascular_codes <- c("293", "290E", "F01", "293,1", "F019", "F012", "F018", "F013", "F011", "F010", "F0183")
+other_codes <- c("306", "290X", "F02", "290W", "F03", "294B", "G311", "311B", "G318A", "311C", "F051", "311X", "F039", "F020", "F024", "F028", "290", "290,1", "F022", "F021", "F023", "F03-P")
+unclear_type <- c("293,9","293,4", "293,3", "293,5", "F0010", "F0013", "F0180") #these are not in SveDem
+
+#All cases
+to1po2$ADRD <- ifelse(to1po2$Dementia == "", 0, 1)
+to1po2$Alzheimers <- ifelse(to1po2$Dementia %in% alzheimers_codes, 1, 0)
+to1po2$Vascular <- ifelse(to1po2$Dementia %in% vascular_codes, 1, 0)
+to1po2$Other <- ifelse(to1po2$Dementia %in% other_codes, 1, 0)
+to1po2$Unclear <- ifelse(to1po2$Dementia %in% unclear_type, 1, 0)
+
+#Svedem unique
+to1po2$S_ADRD <- ifelse(to1po2$Dementia %in% all_codes & to1po2$sampleID %in% SveDem$Id, 1, 0)
+to1po2$S_Alzheimers <- ifelse(to1po2$Dementia %in% alzheimers_codes & to1po2$sampleID %in% SveDem$Id, 1, 0)
+to1po2$S_Vascular <- ifelse(to1po2$Dementia %in% vascular_codes & to1po2$sampleID %in% SveDem$Id, 1, 0)
+to1po2$S_other <- ifelse(to1po2$Dementia %in% other_codes & to1po2$sampleID %in% SveDem$Id, 1, 0)
+
+#Not linked to SveDem, from other registers
+to1po2$NS_ADRD <- ifelse(to1po2$Dementia %in% all_codes & !to1po2$sampleID %in% SveDem$Id, 1, 0)
+to1po2$NS_Alzheimers <- ifelse(to1po2$Dementia %in% alzheimers_codes & !to1po2$sampleID %in% SveDem$Id, 1, 0)
+to1po2$NS_Vascular <- ifelse(to1po2$Dementia %in% vascular_codes & !to1po2$sampleID %in% SveDem$Id, 1, 0)
+to1po2$NS_other <- ifelse(to1po2$Dementia %in% other_codes & !to1po2$sampleID %in% SveDem$Id, 1, 0)
+```
+
+
+Table with overview of cohort
+```{r}
+# Load necessary libraries
+library(dplyr)
+library(broom)
+
+# Function to calculate descriptive statistics with mean ± SD for selected columns 
+# and count for specific columns
+calculate_descriptive_stats <- function(df, column, include_sd = FALSE, use_log_p_value = FALSE, count_only = FALSE) {
+  overall <- df
+  males <- df %>% filter(gender == '1')
+  females <- df %>% filter(gender == '2')
+
+  if (count_only || column == 'status') {
+    # Count the number of cases and calculate the percentage
+    count_overall <- sum(overall[[column]], na.rm = TRUE)
+    count_males <- sum(males[[column]], na.rm = TRUE)
+    count_females <- sum(females[[column]], na.rm = TRUE)
+    
+    percentage_overall <- (count_overall / nrow(overall)) * 100
+    percentage_males <- (count_males / nrow(males)) * 100
+    percentage_females <- (count_females / nrow(females)) * 100
+    
+    return(data.frame(Mean_Overall = paste(count_overall, "(", round(percentage_overall, 2), "%)", sep = ""),
+                      Mean_Males = paste(count_males, "(", round(percentage_males, 2), "%)", sep = ""),
+                      Mean_Females = paste(count_females, "(", round(percentage_females, 2), "%)", sep = ""),
+                      P_Value = NA))
+  }
+
+  # Calculation for other columns
+  mean_overall <- mean(overall[[column]], na.rm = TRUE)
+  mean_male <- mean(males[[column]], na.rm = TRUE)
+  mean_female <- mean(females[[column]], na.rm = TRUE)
+
+  if (include_sd) {
+    sd_overall <- sd(overall[[column]], na.rm = TRUE)
+    sd_male <- sd(males[[column]], na.rm = TRUE)
+    sd_female <- sd(females[[column]], na.rm = TRUE)
+    mean_sd_overall <- paste(round(mean_overall, 2), "±", round(sd_overall, 2))
+    mean_sd_male <- paste(round(mean_male, 2), "±", round(sd_male, 2))
+    mean_sd_female <- paste(round(mean_female, 2), "±", round(sd_female, 2))
+  } else {
+    mean_sd_overall <- as.character(round(mean_overall, 2))
+    mean_sd_male <- as.character(round(mean_male, 2))
+    mean_sd_female <- as.character(round(mean_female, 2))
+  }
+
+  # Perform t-test
+  p_column <- ifelse(use_log_p_value, "TG_log", column)
+  if (column %in% names(df)) {
+    t_test <- tidy(t.test(males[[p_column]], females[[p_column]], na.rm = TRUE))
+    p_value <- t_test$p.value
+  } else {
+    p_value <- NA  # Assign NA if the column doesn't exist
+  }
+
+  return(data.frame(Mean_Overall = mean_sd_overall, Mean_Males = mean_sd_male, 
+                    Mean_Females = mean_sd_female, P_Value = p_value))
+}
+
+# Add log-transformed TG to the dataset
+to1po2$TG_log <- log(to1po2$TG)
+
+# Define columns for analysis, including new columns
+columns_to_analyze <- c('age', 'AgeAtLastDate', 'status', 'kdm', 'kdm_res', 'phenoage', 
+                        'phenoage_res', 'hd', 'hd_log', 'hd_log_res', 'S_Krea', 'TC', 'TG', 'fS_Gluk', 'fS_Jaern', 
+                        'S_Ca', 'S_Urat', 'fS_TIBC', 'Fe_maet', 'S_Alb', 'S_Alp', 'S_K', 'S_FAMN', 
+                        'S_LD', 'S_Hapt', 'S_Urea', 'S_P', 'TimeUntilFollowUp', 
+                        'ADRD', 'Alzheimers', 'Vascular', 'Other', 'Unclear', 
+                        'S_ADRD', 'S_Alzheimers', 'S_Vascular', 'S_other',
+                        'NS_ADRD', 'NS_Alzheimers', 'NS_Vascular', 'NS_other') # Added new columns
+
+# Columns for which mean ± SD is required
+columns_sd_required <- c('age', 'AgeAtLastDate', 'kdm', 'kdm_res', 'phenoage', 'phenoage_res', 
+                         'hd', 'hd_log', 'hd_log_res', 'S_Krea', 'TC', 'TG', 'fS_Gluk', 'fS_Jaern', 'S_Ca', 
+                         'S_Urat', 'fS_TIBC', 'Fe_maet', 'S_Alb', 'S_Alp', 'S_K', 'S_FAMN', 'S_LD', 'S_Hapt', 
+                         'S_Urea', 'S_P', 'TimeUntilFollowUp')
+
+# Columns for which count and percentage are required
+columns_count_required <- c('ADRD', 'Alzheimers', 'Vascular', 'Other', 'Unclear', 
+                            'S_ADRD', 'S_Alzheimers', 'S_Vascular', 'S_other', 'status',
+                            'NS_ADRD', 'NS_Alzheimers', 'NS_Vascular', 'NS_other') # Include 'status' and new columns
+
+# Create an empty DataFrame for results
+results_df <- data.frame(Measure = character(), Mean_Overall = character(), 
+                         Mean_Males = character(), Mean_Females = character(), 
+                         P_Value = numeric(), stringsAsFactors = FALSE)
+
+# Calculate stats for each column
+for (column in columns_to_analyze) {
+  include_sd <- column %in% columns_sd_required
+  use_log_p_value <- column == 'TG'
+  count_only <- column %in% columns_count_required
+  stats <- calculate_descriptive_stats(to1po2, column, include_sd, use_log_p_value, count_only)
+  stats$Measure <- column
+  results_df <- rbind(results_df, stats)
+}
+
+# Renaming measures in the results DataFrame
+measure_names <- c('Chronological age', 'Age at follow up', 'Mortality at censorship', 'kdm', 'kdm_res', 
+                   'phenoage', 'phenoage_res', 'hd', 'hd_log', 'hd_log_res', 'S_Krea', 'TC', 'TG', 'fS_Gluk', 
+                   'fS_Jaern', 'S_Ca', 'S_Urat', 'fS_TIBC', 'Fe_maet', 'S_Alb', 'S_Alp', 'S_K', 'S_FAMN', 'S_LD', 
+                   'S_Hapt', 'S_Urea', 'S_P', 'Time until follow up', 'ADRD', 'Alzheimers', 'Vascular', 'Other', 
+                   'Unclear', 'S_ADRD', 'S_Alzheimers', 'S_Vascular', 'S_other', 'NS_ADRD', 'NS_Alzheimers', 'NS_Vascular', 'NS_other')
+results_df$Measure <- factor(results_df$Measure, levels = columns_to_analyze, labels = measure_names)
+
+# Add N values as a separate row
+n_values <- data.frame(Measure = "N", 
+                       Mean_Overall = as.character(nrow(to1po2)),
+                       Mean_Males = as.character(sum(to1po2$gender == '1')),
+                       Mean_Females = as.character(sum(to1po2$gender == '2')),
+                       P_Value = NA)
+
+results_df <- rbind(n_values, results_df)
+
+# Print the results DataFrame
+print(results_df)
+
+
+```
+
