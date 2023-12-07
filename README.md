@@ -1,6 +1,5 @@
 # BioAge_Association_ADRD
-## This is the code belonging to my master thesis project 'Biological Age and Individual Risk of 
-## Developing Alzheimer's Disease and Related Dementias'.
+## This is the code belonging to my master thesis project 'Biological Age and Individual Risk of Developing Alzheimer's Disease and Related Dementias'.
 
 *The dataset is a subset of AMORIS with creatinine, cholesterol, triglycerides, fasting glucose, fasting iron, calcium, uric acid, fasting total iron binding capacity, iron saturation, albumin, alkaline phosphatase, potassium, fructose amine, lactate dehydrogenase, haptoglobin, blood urea nitrogen, and phosphate.*
 
