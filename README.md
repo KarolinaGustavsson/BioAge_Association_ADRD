@@ -11,12 +11,11 @@ Calculating_BA.nb.html: Calculating biological age in three ways (KDM, Phenoage,
 
 Association.nb.html: looking at the association between biological age and ADRD, as well as ADRD subtypes such as alzheimers and vascular dementia. 
 
-Vadlidation_biomarkers.nb.htlm: checking the biomarkers against mortiality with cox proportional hazard models. This is not central to the thesis. 
-
+Association.nb.html(sex_adjusted_subgroup...): Same as the other association notebook but for the subgroup analysis education level and disposable income were removed as covariates. 
 
 
 *All plots and relevant tables can be found in the folder Output, not everything is loaded in the notebooks (.nb.html).*
 
 
-![Alt text](/images/overview2)
+![Alt text](/images/overview3)
 
